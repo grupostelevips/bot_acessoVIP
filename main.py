@@ -17,7 +17,7 @@ VIP_GROUP_ID = "-1001921257744"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api/v1"
 
-# URL fixa do teu Render para garantir que a Pushin Pay nunca falha o webhook
+# URL fixa do teu Render
 RENDER_URL_FIXA = "bot-acessovip-1.onrender.com"
 
 # Memória temporária do bot
@@ -56,7 +56,7 @@ TEXTO_INSTRUCOES_PIX = (
     "⬇️ **COPIE SEU CÓDIGO ABAIXO** ⬇️"
 )
 
-# --- FUNÇÕES DE ENVIO ---
+# --- FUNÇÕES DE ENVIO BLINDADAS ---
 def enviar_mensagem(chat_id, texto, markup=None):
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
     if markup: payload["reply_markup"] = markup
@@ -84,8 +84,15 @@ def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
         print(f"Erro sendPhoto: {e}")
 
 def gerar_pix_pushinpay(valor_em_reais, chat_id):
-    headers = {"Authorization": f"Bearer {PUSHINPAY_API_TOKEN}", "Accept": "application/json"}
-    valor_centavos = int(float(valor_em_reais) * 100)
+    # Cabeçalhos estritos exigidos pela Pushin Pay para aceitar a requisição de Cash In
+    headers = {
+        "Authorization": f"Bearer {PUSHINPAY_API_TOKEN}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    # Converte explicitamente para centavos inteiros (ex: 14.89 virá 1489)
+    valor_centavos = int(round(float(valor_em_reais) * 100))
     
     webhook_dinamico = f"https://{RENDER_URL_FIXA}/webhook/pushinpay"
     
@@ -97,11 +104,17 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id):
     
     try:
         req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
-        resposta_json = req.json()
-        print(f"PushinPay Resposta: {resposta_json}")
-        return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
+        print(f"Status Code PushinPay: {req.status_code}")
+        print(f"Resposta PushinPay: {req.text}")
+        
+        if req.status_code == 200 or req.status_code == 201:
+            resposta_json = req.json()
+            return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
+        else:
+            print(f"Erro retornado pela API do banco: {req.text}")
+            return None
     except Exception as e:
-        print(f"Erro Pix PushinPay: {e}")
+        print(f"Exceção crítica ao conectar com PushinPay: {e}")
         return None
 
 # --- MOTOR DE REMARKETING INFINITO ---
@@ -195,7 +208,7 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
-            # Disparo individual e separado para garantir que o Telegram processa todos os blocos
+            # Ordem correta de entrega: Vídeo 1 -> Vídeo 2 -> Foto da Oferta com Botões
             enviar_video(chat_id, VIDEO_1_NARRADO)
             enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
             
