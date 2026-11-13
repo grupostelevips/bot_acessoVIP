@@ -1,6 +1,5 @@
 import os
 import requests
-import time
 from flask import Flask, request
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -85,7 +84,9 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
     headers = {"Authorization": f"Bearer {PUSHINPAY_API_TOKEN}", "Accept": "application/json"}
     valor_centavos = int(float(valor_em_reais) * 100)
     
-    webhook_dinamico = f"https://{render_host}/webhook/pushinpay"
+    # Garante que a URL do webhook seja sempre limpa e com https
+    host_limpo = render_host.replace("https://", "").replace("http://", "").strip("/")
+    webhook_dinamico = f"https://{host_limpo}/webhook/pushinpay"
     
     payload = {
         "value": valor_centavos, 
@@ -95,7 +96,9 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
     
     try:
         req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
-        return req.json().get("qr_code") or req.json().get("pix_copia_e_cola")
+        resposta_json = req.json()
+        print(f"Resposta PushinPay: {resposta_json}") # Ajuda a debugar se der erro
+        return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
     except Exception as e:
         print(f"Erro ao gerar Pix: {e}")
         return None
@@ -191,12 +194,9 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
-            # Envio sequencial com pausa para o Telegram processar os vídeos sem atropelos
+            # Envio direto das mídias em sequência (sem travar o servidor com sleep)
             enviar_video(chat_id, VIDEO_1_NARRADO)
-            time.sleep(2)
-            
             enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
-            time.sleep(2)
             
             markup = {
                 "inline_keyboard": [
