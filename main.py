@@ -17,6 +17,9 @@ VIP_GROUP_ID = "-1001921257744"
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api/v1"
 
+# URL fixa do teu Render para garantir que a Pushin Pay nunca falha o webhook
+RENDER_URL_FIXA = "bot-acessovip-1.onrender.com"
+
 # Memória temporária do bot
 usuarios = {}
 
@@ -60,7 +63,7 @@ def enviar_mensagem(chat_id, texto, markup=None):
     try:
         requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload, timeout=10)
     except Exception as e:
-        print(f"Erro ao enviar mensagem: {e}")
+        print(f"Erro sendMessage: {e}")
 
 def enviar_video(chat_id, video_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "video": video_id, "parse_mode": "Markdown"}
@@ -69,7 +72,7 @@ def enviar_video(chat_id, video_id, legenda=None, markup=None):
     try:
         requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload, timeout=20)
     except Exception as e:
-        print(f"Erro ao enviar vídeo: {e}")
+        print(f"Erro sendVideo: {e}")
 
 def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "photo": foto_id, "parse_mode": "Markdown"}
@@ -78,15 +81,13 @@ def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
     try:
         requests.post(f"{TELEGRAM_API_URL}/sendPhoto", json=payload, timeout=15)
     except Exception as e:
-        print(f"Erro ao enviar foto: {e}")
+        print(f"Erro sendPhoto: {e}")
 
-def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
+def gerar_pix_pushinpay(valor_em_reais, chat_id):
     headers = {"Authorization": f"Bearer {PUSHINPAY_API_TOKEN}", "Accept": "application/json"}
     valor_centavos = int(float(valor_em_reais) * 100)
     
-    # Garante que a URL do webhook seja sempre limpa e com https
-    host_limpo = render_host.replace("https://", "").replace("http://", "").strip("/")
-    webhook_dinamico = f"https://{host_limpo}/webhook/pushinpay"
+    webhook_dinamico = f"https://{RENDER_URL_FIXA}/webhook/pushinpay"
     
     payload = {
         "value": valor_centavos, 
@@ -97,10 +98,10 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
     try:
         req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
         resposta_json = req.json()
-        print(f"Resposta PushinPay: {resposta_json}") # Ajuda a debugar se der erro
+        print(f"PushinPay Resposta: {resposta_json}")
         return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
     except Exception as e:
-        print(f"Erro ao gerar Pix: {e}")
+        print(f"Erro Pix PushinPay: {e}")
         return None
 
 # --- MOTOR DE REMARKETING INFINITO ---
@@ -138,7 +139,7 @@ def disparar_remarketing(chat_id, tipo_funil, contagem):
 
         scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + tempo, args=[chat_id, tipo_funil, contagem + 1])
     except Exception as e:
-        print(f"Erro no remarketing: {e}")
+        print(f"Erro remarketing: {e}")
 
 # --- ROTAS DA API ---
 @app.route("/", methods=["GET"])
@@ -147,7 +148,7 @@ def home():
 
 @app.route("/setup", methods=["GET"])
 def setup_webhook():
-    webhook_url = f"https://{request.host}/webhook/telegram/{TELEGRAM_BOT_TOKEN}"
+    webhook_url = f"https://{RENDER_URL_FIXA}/webhook/telegram/{TELEGRAM_BOT_TOKEN}"
     resposta = requests.get(f"{TELEGRAM_API_URL}/setWebhook?url={webhook_url}")
     return f"Status do Webhook do Telegram: {resposta.json()}", 200
 
@@ -175,8 +176,8 @@ def pushinpay_webhook():
             usuarios[chat_id] = {"status": "VIP_LIBERADO"}
             try:
                 res_convite = requests.post(f"{TELEGRAM_API_URL}/createChatInviteLink", json={"chat_id": VIP_GROUP_ID, "member_limit": 1}).json()
-                link = res_convite.get("result", {}).get("invite_link", "LINK_MANUAL_AQUI_SE_DER_ERRO")
-            except: link = "LINK_MANUAL_AQUI_SE_DER_ERRO"
+                link = res_convite.get("result", {}).get("invite_link", "LINK_MANUAL_AQUI")
+            except: link = "LINK_MANUAL_AQUI"
             
             enviar_mensagem(chat_id, f"🎉 **ACESSO VALIDADO!**\n\nBem-vindo ao submundo. Entre agora:\n👑 [ACESSAR VIP AQUI]({link})")
 
@@ -194,7 +195,7 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
-            # Envio direto das mídias em sequência (sem travar o servidor com sleep)
+            # Disparo individual e separado para garantir que o Telegram processa todos os blocos
             enviar_video(chat_id, VIDEO_1_NARRADO)
             enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
             
@@ -218,8 +219,7 @@ def telegram_webhook():
         if botao in valores:
             enviar_mensagem(chat_id, "⏳ *Gerando sua chave criptografada, aguarde...*")
             
-            render_host = request.host
-            codigo_pix = gerar_pix_pushinpay(valores[botao], chat_id, render_host)
+            codigo_pix = gerar_pix_pushinpay(valores[botao], chat_id)
             
             if codigo_pix:
                 enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
