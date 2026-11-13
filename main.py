@@ -113,7 +113,7 @@ def disparar_remarketing(chat_id, tipo_funil, contagem):
         enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
 
     elif contagem % 2 != 0:
-        legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e só falta você. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos antes que a vaga feche!"
+        legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e assim que esgotar, fechamos. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
         enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
     else:
         legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
@@ -136,8 +136,8 @@ def home():
 # Essa rota liga o Telegram ao seu bot assim que ele for pro ar
 @app.route("/setup", methods=["GET"])
 def setup_webhook():
-    host_url = request.host_url.strip('/')
-    webhook_url = f"{host_url}/webhook/telegram/{TELEGRAM_BOT_TOKEN}"
+    # Forçamos o https:// direto na raiz para o Telegram não rejeitar por causa de segurança
+    webhook_url = f"https://{request.host}/webhook/telegram/{TELEGRAM_BOT_TOKEN}"
     resposta = requests.get(f"{TELEGRAM_API_URL}/setWebhook?url={webhook_url}")
     return f"Status do Webhook do Telegram: {resposta.json()}", 200
 
