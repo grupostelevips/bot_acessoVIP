@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 from flask import Flask, request
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -57,25 +58,33 @@ TEXTO_INSTRUCOES_PIX = (
 def enviar_mensagem(chat_id, texto, markup=None):
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
     if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload, timeout=10)
+    except Exception as e:
+        print(f"Erro ao enviar mensagem: {e}")
 
 def enviar_video(chat_id, video_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "video": video_id, "parse_mode": "Markdown"}
     if legenda: payload["caption"] = legenda
     if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload)
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload, timeout=20)
+    except Exception as e:
+        print(f"Erro ao enviar vídeo: {e}")
 
 def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "photo": foto_id, "parse_mode": "Markdown"}
     if legenda: payload["caption"] = legenda
     if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendPhoto", json=payload)
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/sendPhoto", json=payload, timeout=15)
+    except Exception as e:
+        print(f"Erro ao enviar foto: {e}")
 
 def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
     headers = {"Authorization": f"Bearer {PUSHINPAY_API_TOKEN}", "Accept": "application/json"}
     valor_centavos = int(float(valor_em_reais) * 100)
     
-    # Gera o webhook dinâmico pegando a URL que o Render criar para você automaticamente
     webhook_dinamico = f"https://{render_host}/webhook/pushinpay"
     
     payload = {
@@ -85,68 +94,63 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id, render_host):
     }
     
     try:
-        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers)
+        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
         return req.json().get("qr_code") or req.json().get("pix_copia_e_cola")
-    except: return None
+    except Exception as e:
+        print(f"Erro ao gerar Pix: {e}")
+        return None
 
 # --- MOTOR DE REMARKETING INFINITO ---
 def disparar_remarketing(chat_id, tipo_funil, contagem):
-    status_atual = usuarios.get(chat_id, {}).get("status")
-    
-    # Se o cliente já avançou, cancela o remarketing
-    if tipo_funil == "ENTRADA" and status_atual != "AGUARDANDO_PAGAMENTO_ENTRADA": return
-    if tipo_funil == "TAXA" and status_atual != "PENDENTE_TAXA_SEGURANCA": return
+    try:
+        status_atual = usuarios.get(chat_id, {}).get("status")
+        
+        if tipo_funil == "ENTRADA" and status_atual != "AGUARDANDO_PAGAMENTO_ENTRADA": return
+        if tipo_funil == "TAXA" and status_atual != "PENDENTE_TAXA_SEGURANCA": return
 
-    # Define os botões dependendo de onde o cliente parou
-    if tipo_funil == "ENTRADA":
-        markup = {"inline_keyboard": [[{"text": "🔥 Tentar Novamente - VIP (R$ 9,90)", "callback_data": "comprar_990"}]]}
-        if contagem > 3: # Começa a dar desconto depois da 4ª tentativa
-            markup = {"inline_keyboard": [[{"text": "💣 Oferta Secreta (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
-    else:
-        markup = {"inline_keyboard": [[{"text": "🔒 Pagar Taxa Reembolsável (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]}
-        if contagem > 3:
-            markup = {"inline_keyboard": [[{"text": "🔒 Taxa com Desconto (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
+        if tipo_funil == "ENTRADA":
+            markup = {"inline_keyboard": [[{"text": "🔥 Tentar Novamente - VIP (R$ 9,90)", "callback_data": "comprar_990"}]]}
+            if contagem > 3:
+                markup = {"inline_keyboard": [[{"text": "💣 Oferta Secreta (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
+        else:
+            markup = {"inline_keyboard": [[{"text": "🔒 Pagar Taxa Reembolsável (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]}
+            if contagem > 3:
+                markup = {"inline_keyboard": [[{"text": "🔒 Taxa com Desconto (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
 
-    # Lógica de rotação de Vídeos e Copys
-    if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
-        legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Câmeras escondidas, casadas no sigilo e conteúdos deletados da internet que você não acha em lugar nenhum. Finalize agora!"
-        enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
+        if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
+            legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Câmeras escondidas, casadas no sigilo e conteúdos deletados da internet que você não acha em lugar nenhum. Finalize agora!"
+            enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
+        elif contagem % 2 != 0:
+            legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e assim que esgotar, fechamos. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
+            enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
+        else:
+            legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
+            enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
 
-    elif contagem % 2 != 0:
-        legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e assim que esgotar, fechamos. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
-        enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
-    else:
-        legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
-        enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
+        if contagem == 0: tempo = timedelta(minutes=5)
+        elif contagem == 1: tempo = timedelta(minutes=5)
+        elif contagem == 2: tempo = timedelta(minutes=10)
+        elif contagem == 3: tempo = timedelta(minutes=25)
+        else: tempo = timedelta(hours=3)
 
-    # Lógica do Padrão de Tempo
-    if contagem == 0: tempo = timedelta(minutes=5)
-    elif contagem == 1: tempo = timedelta(minutes=5)
-    elif contagem == 2: tempo = timedelta(minutes=10)
-    elif contagem == 3: tempo = timedelta(minutes=25)
-    else: tempo = timedelta(hours=3)
-
-    scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + tempo, args=[chat_id, tipo_funil, contagem + 1])
+        scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + tempo, args=[chat_id, tipo_funil, contagem + 1])
+    except Exception as e:
+        print(f"Erro no remarketing: {e}")
 
 # --- ROTAS DA API ---
 @app.route("/", methods=["GET"])
 def home(): 
     return "Máquina de Vendas Ativa!", 200
 
-# Essa rota liga o Telegram ao seu bot assim que ele for pro ar
 @app.route("/setup", methods=["GET"])
 def setup_webhook():
-    # Forçamos o https:// direto na raiz para o Telegram não rejeitar por causa de segurança
     webhook_url = f"https://{request.host}/webhook/telegram/{TELEGRAM_BOT_TOKEN}"
     resposta = requests.get(f"{TELEGRAM_API_URL}/setWebhook?url={webhook_url}")
     return f"Status do Webhook do Telegram: {resposta.json()}", 200
 
 @app.route("/webhook/pushinpay", methods=["POST", "GET"])
 def pushinpay_webhook():
-    # O silent=True evita erros quando a Pushin Pay mandar o teste vazio
     dados = request.get_json(silent=True)
-    
-    # Se vier vazio (teste da Pushin Pay), nós devolvemos o 200 que eles exigem!
     if not dados: 
         return {"status": "Teste recebido com sucesso!"}, 200
 
@@ -162,7 +166,6 @@ def pushinpay_webhook():
             enviar_foto(chat_id, IMAGEM_TAXA_SEGURANCA, TEXTO_TAXA_SEGURANCA, {
                 "inline_keyboard": [[{"text": "🔒 Ativar e Reembolsar (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]
             })
-            # Inicia o Loop Infinito da Taxa de Segurança
             scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=5), args=[chat_id, "TAXA", 0])
 
         elif usuario_status == "PENDENTE_TAXA_SEGURANCA":
@@ -178,7 +181,8 @@ def pushinpay_webhook():
 
 @app.route(f"/webhook/telegram/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
-    update = request.get_json()
+    update = request.get_json(silent=True)
+    if not update: return {"status": "ok"}, 200
     
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
@@ -187,8 +191,12 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
+            # Envio sequencial com pausa para o Telegram processar os vídeos sem atropelos
             enviar_video(chat_id, VIDEO_1_NARRADO)
+            time.sleep(2)
+            
             enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
+            time.sleep(2)
             
             markup = {
                 "inline_keyboard": [
@@ -198,7 +206,6 @@ def telegram_webhook():
             }
             enviar_foto(chat_id, FOTO_OFERTA_NINFA, TEXTO_START, markup)
             
-            # Inicia o Loop Infinito do funil
             scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=5), args=[chat_id, "ENTRADA", 0])
 
     elif "callback_query" in update:
@@ -211,7 +218,6 @@ def telegram_webhook():
         if botao in valores:
             enviar_mensagem(chat_id, "⏳ *Gerando sua chave criptografada, aguarde...*")
             
-            # Pega o link do Render e passa pra gerar o Pix certinho
             render_host = request.host
             codigo_pix = gerar_pix_pushinpay(valores[botao], chat_id, render_host)
             
