@@ -141,10 +141,14 @@ def setup_webhook():
     resposta = requests.get(f"{TELEGRAM_API_URL}/setWebhook?url={webhook_url}")
     return f"Status do Webhook do Telegram: {resposta.json()}", 200
 
-@app.route("/webhook/pushinpay", methods=["POST"])
+@app.route("/webhook/pushinpay", methods=["POST", "GET"])
 def pushinpay_webhook():
-    dados = request.get_json()
-    if not dados: return {"status": "error"}, 400
+    # O silent=True evita erros quando a Pushin Pay mandar o teste vazio
+    dados = request.get_json(silent=True)
+    
+    # Se vier vazio (teste da Pushin Pay), nós devolvemos o 200 que eles exigem!
+    if not dados: 
+        return {"status": "Teste recebido com sucesso!"}, 200
 
     status = dados.get("status")
     chat_id = dados.get("external_reference")
