@@ -1,7 +1,5 @@
 import os
 import requests
-import threading
-import time
 from flask import Flask, request
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -17,15 +15,16 @@ ADMIN_ID = "7008304182"
 VIP_GROUP_ID = "-1001921257744"
 
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api/v1"
+# CORREÇÃO PUSHIN PAY: Removido o /v1/ que estava causando o Erro 404
+PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api"
 RENDER_URL_FIXA = "bot-acessovip-1.onrender.com"
 
 usuarios = {}
 
 # ==================== MÍDIAS DO FUNIL ====================
-VIDEO_1_NARRADO = "AAMCAQADGQEAAwtq9mYTKIw9CTCi1dG0NNxustTfVwAC6xgAAg_-sEdSJ8QNpaFZRAEAB20AAz0E"
-VIDEO_2_LONGO = "AAMCAQADGQEAAwxq9mYTrkycKxZLXqvEFuJMWkzRFAAC7BgAAg_-sEflfXjDBTgZHQEAB20AAz0E"
-VIDEO_3_PROMESSA = "AAMCAQADGQEAAw1q9mYTxBErxeiP9uboKRY8gwmCPgAC7RgAAg_-sEct-_T4gH_2WgEAB20AAz0E"
+VIDEO_1_NARRADO = "AAMCAQADGQEAAzxq9v9aDWskidrYHyPVlrOJ6-wm-QACkAgAAg_-uEe4Uf6cxzd6AwEAB20AAz0E"
+VIDEO_2_LONGO = "AAMCAQADGQEAAz1q9wABWInhXVgPIpWvxc8_cKFISIUAApIIAAIP_rhHrkB-hY3Ue9QBAAdtAAM9BA"
+VIDEO_3_PROMESSA = "AAMCAQADGQEAAz9q9wE9mhO7E8WIIJQodRZv2HzPMgAClwgAAg_-uEcpOx9Bj0UCjAEAB20AAz0E"
 FOTO_OFERTA_NINFA = "AgACAgEAAxkBAAMQavZszfbH4j9T9kElws2YrZIo6S0AAgoNaxsP_rBHs0O4L5Gs34wBAAMCAANzAAM9BA"
 IMAGEM_TAXA_SEGURANCA = "AgACAgEAAxkBAAMRavZuBLMuYaDGOSHUpHPh7j9wKPoAAgsNaxsP_rBH1CMV70aesl8BAAMCAANzAAM9BA"
 IMAGEM_TUTORIAL_PIX = "AgACAgEAAxkBAAMRavZuBLMuYaDGOSHUpHPh7j9wKPoAAgsNaxsP_rBH1CMV70aesl8BAAMCAANzAAM9BA"
@@ -63,7 +62,14 @@ def enviar_video(chat_id, video_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "video": video_id, "parse_mode": "Markdown"}
     if legenda: payload["caption"] = legenda
     if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload)
+    
+    req = requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload)
+    
+    # HACK DO ERRO: Se o Telegram rejeitar o vídeo, ele vai avisar você no chat na hora!
+    if req.status_code != 200:
+        erro_telegram = req.json().get('description', req.text)
+        mensagem_erro = f"❌ **Aviso do Sistema:** O Vídeo não foi enviado.\n\nMotivo do Telegram: `{erro_telegram}`\n\n*(Dica: Se disser 'wrong file identifier', significa que o ID do vídeo é inválido ou foi salvo como Documento em vez de Vídeo).*."
+        enviar_mensagem(chat_id, mensagem_erro)
 
 def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "photo": foto_id, "parse_mode": "Markdown"}
@@ -78,24 +84,22 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id):
         "Content-Type": "application/json"
     }
     
-    valor_centavos = int(float(valor_em_reais) * 100)
-    webhook_dinamico = f"https://{RENDER_URL_FIXA}/webhook/pushinpay"
+    valor_centavos = int(round(float(valor_em_reais) * 100))
+    webhook_dinamico = f"https://{RENDER_URL_FIXA}/webhook/pushinpay?chat_id={chat_id}"
     
     payload = {
         "value": valor_centavos, 
-        "webhook_url": webhook_dinamico,
-        "external_reference": str(chat_id)
+        "webhook_url": webhook_dinamico
     }
     
     try:
-        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
+        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers)
         
-        # Se for sucesso (200 ou 201), devolve o Pix
         if req.status_code in [200, 201]:
             resposta_json = req.json()
             return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
         else:
-            # SE DEU ERRO, vai devolver a mensagem exata do banco!
+            # Mostra o erro exato do banco para não ficarmos cegos
             return f"ERRO_BANCO: Código {req.status_code} - Resposta: {req.text}"
     except Exception as e:
         return f"ERRO_SISTEMA: {str(e)}"
@@ -115,19 +119,15 @@ def disparar_remarketing(chat_id, tipo_funil, contagem):
         if contagem > 3:
             markup = {"inline_keyboard": [[{"text": "🔒 Taxa com Desconto (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
 
-    # Aqui também aplicamos o conceito de Thread para envios seguros sem timeout
-    def envio_remarketing():
-        if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
-            legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Câmeras escondidas, casadas no sigilo e conteúdos deletados da internet que você não acha em lugar nenhum. Finalize agora!"
-            enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
-        elif contagem % 2 != 0:
-            legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e assim que esgotar, fechamos. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
-            enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
-        else:
-            legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
-            enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
-
-    threading.Thread(target=envio_remarketing).start()
+    if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
+        legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Câmeras escondidas, casadas no sigilo e conteúdos deletados da internet que você não acha em lugar nenhum. Finalize agora!"
+        enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
+    elif contagem % 2 != 0:
+        legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e assim que esgotar, fechamos. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
+        enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
+    else:
+        legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
+        enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
 
     if contagem == 0: tempo = timedelta(minutes=5)
     elif contagem == 1: tempo = timedelta(minutes=5)
@@ -154,7 +154,7 @@ def pushinpay_webhook():
         return {"status": "Teste recebido com sucesso!"}, 200
 
     status = dados.get("status")
-    chat_id = dados.get("external_reference")
+    chat_id = request.args.get("chat_id")
 
     if status in ["paid", "APPROVED", "PAID"] and chat_id:
         chat_id = int(chat_id)
@@ -190,22 +190,17 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
-            # SOLUÇÃO DOS VÍDEOS: Envios em background para não travar o Telegram
-            def enviar_sequencia_boas_vindas():
-                enviar_video(chat_id, VIDEO_1_NARRADO)
-                time.sleep(1) # Intervalo seguro
-                enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
-                time.sleep(1) # Intervalo seguro
-                
-                markup = {
-                    "inline_keyboard": [
-                        [{"text": "✅ VIP + Drive Ninfa (R$ 14,89)", "callback_data": "comprar_1489"}],
-                        [{"text": "❌ Apenas o VIP Padrão (R$ 9,90)", "callback_data": "comprar_990"}]
-                    ]
-                }
-                enviar_foto(chat_id, FOTO_OFERTA_NINFA, TEXTO_START, markup)
+            # Envia Mídias na sequência
+            enviar_video(chat_id, VIDEO_1_NARRADO)
+            enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
             
-            threading.Thread(target=enviar_sequencia_boas_vindas).start()
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "✅ VIP + Drive Ninfa (R$ 14,89)", "callback_data": "comprar_1489"}],
+                    [{"text": "❌ Apenas o VIP Padrão (R$ 9,90)", "callback_data": "comprar_990"}]
+                ]
+            }
+            enviar_foto(chat_id, FOTO_OFERTA_NINFA, TEXTO_START, markup)
             
             scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=5), args=[chat_id, "ENTRADA", 0])
 
@@ -219,15 +214,15 @@ def telegram_webhook():
         if botao in valores:
             enviar_mensagem(chat_id, "⏳ *Gerando sua chave criptografada, aguarde...*")
             
-            # Aqui executamos a função do banco
             codigo_pix = gerar_pix_pushinpay(valores[botao], chat_id)
             
+            # Se vier preenchido e não começar com a palavra ERRO, ele envia a chave
             if codigo_pix and not codigo_pix.startswith("ERRO_"):
                 enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
                 enviar_mensagem(chat_id, TEXTO_INSTRUCOES_PIX)
                 enviar_mensagem(chat_id, f"`{codigo_pix}`")
             else:
-                # SOLUÇÃO DO BANCO: O bot vai enviar no chat exatamente o que a Pushin Pay recusou!
+                # SE DEU ERRO, VAI APARECER EXATAMENTE O TEXTO DO ERRO NA TELA!
                 mensagem_erro = f"❌ *Erro do Banco:* O servidor respondeu com:\n`{codigo_pix}`"
                 enviar_mensagem(chat_id, mensagem_erro)
 
