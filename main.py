@@ -18,7 +18,7 @@ VIP_GROUP_ID = "-1001921257744"
 
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api"
-RENDER_URL_FIXA = "bot-acessovip-1.onrender.com"
+RENDER_URL_FIXA = "bot-acessovip-3.onrender.com"
 
 # Memória de estado dos leads
 usuarios = {}
