@@ -508,9 +508,9 @@ def telegram_webhook():
         else:
             responder_clique_botao(query["id"])
             valores = {
-                "comprar_1489": "0.50",
+                "comprar_1489": "14.89",
                 "comprar_990": "9.90",
-                "pagar_taxa_1290": "0.90",
+                "pagar_taxa_1290": "12.90",
                 "pagar_taxa_490": "4.90"
             }
             if botao in valores:
