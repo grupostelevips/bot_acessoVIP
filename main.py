@@ -1,5 +1,7 @@
 import os
 import requests
+import threading
+import time
 from flask import Flask, request
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +10,7 @@ app = Flask(__name__)
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# --- AS NOSSAS CHAVES ---
+# --- CHAVES E CONFIGURAÇÕES ---
 TELEGRAM_BOT_TOKEN = "9144271229:AAFvv9taDmGTnlI4nHoQ4mAOTJqsJFCOxb4"
 PUSHINPAY_API_TOKEN = "73774|DCDTM4JGmuvz4MS4g5vPHy2ucM54PkCeQEu7QA4y49fe526b"
 ADMIN_ID = "7008304182"
@@ -18,32 +20,37 @@ TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PUSHINPAY_API_URL = "https://api.pushinpay.com.br/api"
 RENDER_URL_FIXA = "bot-acessovip-1.onrender.com"
 
+# Memória de estado dos leads
 usuarios = {}
 
 # ==================== MÍDIAS DO FUNIL ====================
+# ATENÇÃO: Mantenha aqui os seus IDs MP4 (BAAC...) e as fotos já corrigidas do seu GitHub!
 VIDEO_1_NARRADO = "AAMCAQADGQEAAwtq9mYTKIw9CTCi1dG0NNxustTfVwAC6xgAAg_-sEdSJ8QNpaFZRAEAB20AAz0E"
 VIDEO_2_LONGO = "AAMCAQADGQEAAwxq9mYTrkycKxZLXqvEFuJMWkzRFAAC7BgAAg_-sEflfXjDBTgZHQEAB20AAz0E"
 VIDEO_3_PROMESSA = "AAMCAQADGQEAAw1q9mYTxBErxeiP9uboKRY8gwmCPgAC7RgAAg_-sEct-_T4gH_2WgEAB20AAz0E"
-
-FOTO_OFERTA_PRINCIPAL = "AgACAgEAAxkBAAMQavZszfbH4j9T9kElws2YrZIo6S0AAgoNaxsP_rBHs0O4L5Gs34wBAAMCAANzAAM9BA"
-TEXTO_OFERTA_PRINCIPAL = (
-    "🔥 **O MAIOR E MAIS PROIBIDO ACERVO DO BRASIL**\n\n"
-    "🔞 **ACESSO VIP COMPLETO: CASADAS, VAZADOS E CÂMERAS ESCONDIDAS**\n\n"
-    "Conteúdos brutais que ninguém tem coragem de postar. Sem censura, atualizado diariamente.\n\n"
-    "👇 **GARANTA SUA VAGA ANTES QUE O LINK EXPIRE:**"
-)
-
 FOTO_OFERTA_NINFA = "AgACAgEAAxkBAAMQavZszfbH4j9T9kElws2YrZIo6S0AAgoNaxsP_rBHs0O4L5Gs34wBAAMCAANzAAM9BA"
-TEXTO_OFERTA_NINFA = (
-    "💣 **ESPERA! LEVE O COMBO SECRETO COM DESCONTO...**\n\n"
-    "🔞 **O DRIVE EXCLUSIVO DA NINFOMANÍACA DE 19 ANOS (400+ vídeos amadores)**\n\n"
-    "Deseja adicionar esse acervo vitalício junto com o seu VIP por apenas um pequeno acréscimo totalizando **R$ 14,89**?"
-)
-
 IMAGEM_TAXA_SEGURANCA = "AgACAgEAAxkBAAMRavZuBLMuYaDGOSHUpHPh7j9wKPoAAgsNaxsP_rBH1CMV70aesl8BAAMCAANzAAM9BA"
 IMAGEM_TUTORIAL_PIX = "AgACAgEAAxkBAAMRavZuBLMuYaDGOSHUpHPh7j9wKPoAAgsNaxsP_rBH1CMV70aesl8BAAMCAANzAAM9BA"
 # =========================================================
 
+# 1. COPY DA OFERTA PRINCIPAL (Vai como legenda do 2º vídeo no /start)
+TEXTO_OFERTA_PRINCIPAL = (
+    "🔥 **O MAIOR E MAIS PROIBIDO ACERVO VIP DO BRASIL**\n\n"
+    "🔞 **ACESSO COMPLETO: CASADAS, VAZADOS REAIS E CÂMERAS ESCONDIDAS**\n\n"
+    "Conteúdos exclusivos que são derrubados da internet em minutos. Sem censura, sem cortes e atualizado todos os dias no sigilo absoluto.\n\n"
+    "👇 **TOQUE NO BOTÃO ABAIXO PARA LIBERAR SEU ACESSO:**"
+)
+
+# 2. COPY DA SEGUNDA OFERTA (Só aparece DEPOIS que o lead clica no botão da 1ª oferta)
+TEXTO_OFERTA_NINFA = (
+    "💣 **ESPERA! VOCÊ LIBEROU UMA OFERTA ÚNICA ANTES DE PAGAR...**\n\n"
+    "🔞 **O DRIVE SECRETO DA NINFOMANÍACA DE 19 ANOS**\n\n"
+    "Conseguimos acesso ao celular de uma modelo novinha que gravou mais de **400 vídeos amadores** dando para desconhecidos no sigilo. Sem censura, sem cortes, chorando e implorando.\n\n"
+    "Você pode levar o **VIP Principal + Esse Drive Vitalício** juntos agora mesmo por um valor ridículo.\n\n"
+    "👇 **ESCOLHA COMO DESEJA CONTINUAR:**"
+)
+
+# 3. COPY DA TAXA DE SEGURANÇA (Só aparece DEPOIS que o Pix de entrada é pago)
 TEXTO_TAXA_SEGURANCA = (
     "⚠️ **ÚLTIMA ETAPA OBRIGATÓRIA - DISPOSITIVO NÃO RECONHECIDO!**\n\n"
     "Pagamento de entrada confirmado! Porém, nosso sistema antifraude barrou sua entrada imediata. Para manter o grupo 100% livre de denúncias, exigimos uma ativação de segurança.\n\n"
@@ -51,6 +58,7 @@ TEXTO_TAXA_SEGURANCA = (
     "👇 **Ative abaixo para receber o link IMEDIATAMENTE:**"
 )
 
+# 4. INSTRUÇÕES DO PIX (Enviado sempre antes de qualquer código Pix)
 TEXTO_INSTRUCOES_PIX = (
     "✅ **Como pagar e liberar na hora:**\n\n"
     "1️⃣ - Toque no código abaixo para copiar\n"
@@ -59,22 +67,47 @@ TEXTO_INSTRUCOES_PIX = (
     "⬇️ **COPIE SEU CÓDIGO ABAIXO** ⬇️"
 )
 
+# --- FUNÇÕES DE ENVIO ---
 def enviar_mensagem(chat_id, texto, markup=None):
     payload = {"chat_id": chat_id, "text": texto, "parse_mode": "Markdown"}
-    if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload)
+    if markup:
+        payload["reply_markup"] = markup
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=payload, timeout=15)
+    except Exception as e:
+        print(f"Erro sendMessage: {e}")
 
 def enviar_video(chat_id, video_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "video": video_id, "parse_mode": "Markdown"}
-    if legenda: payload["caption"] = legenda
-    if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload)
+    if legenda:
+        payload["caption"] = legenda
+    if markup:
+        payload["reply_markup"] = markup
+    try:
+        req = requests.post(f"{TELEGRAM_API_URL}/sendVideo", json=payload, timeout=30)
+        if req.status_code != 200:
+            print(f"Erro Telegram sendVideo: {req.text}")
+    except Exception as e:
+        print(f"Exceção sendVideo: {e}")
 
 def enviar_foto(chat_id, foto_id, legenda=None, markup=None):
     payload = {"chat_id": chat_id, "photo": foto_id, "parse_mode": "Markdown"}
-    if legenda: payload["caption"] = legenda
-    if markup: payload["reply_markup"] = markup
-    requests.post(f"{TELEGRAM_API_URL}/sendPhoto", json=payload)
+    if legenda:
+        payload["caption"] = legenda
+    if markup:
+        payload["reply_markup"] = markup
+    try:
+        req = requests.post(f"{TELEGRAM_API_URL}/sendPhoto", json=payload, timeout=20)
+        if req.status_code != 200:
+            print(f"Erro Telegram sendPhoto: {req.text}")
+    except Exception as e:
+        print(f"Exceção sendPhoto: {e}")
+
+def responder_clique_botao(callback_query_id):
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": callback_query_id}, timeout=5)
+    except:
+        pass
 
 def gerar_pix_pushinpay(valor_em_reais, chat_id):
     headers = {
@@ -86,45 +119,89 @@ def gerar_pix_pushinpay(valor_em_reais, chat_id):
     webhook_dinamico = f"https://{RENDER_URL_FIXA}/webhook/pushinpay?chat_id={chat_id}"
     
     payload = {
-        "value": valor_centavos, 
+        "value": valor_centavos,
         "webhook_url": webhook_dinamico
     }
     
     try:
-        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers)
+        req = requests.post(f"{PUSHINPAY_API_URL}/pix/cashIn", json=payload, headers=headers, timeout=15)
         if req.status_code in [200, 201]:
             resposta_json = req.json()
-            return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola") or resposta_json.get("encodedImage")
+            return resposta_json.get("qr_code") or resposta_json.get("pix_copia_e_cola")
         else:
-            return f"ERRO_BANCO: Código {req.status_code} - Resposta: {req.text}"
+            return f"ERRO_BANCO: Código {req.status_code} - {req.text}"
     except Exception as e:
         return f"ERRO_SISTEMA: {str(e)}"
 
+def entregar_pix_completo(chat_id, valor_reais):
+    enviar_mensagem(chat_id, "⏳ *Gerando sua chave PIX criptografada, aguarde...*")
+    codigo_pix = gerar_pix_pushinpay(valor_reais, chat_id)
+    
+    if codigo_pix and not codigo_pix.startswith("ERRO_"):
+        enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
+        time.sleep(0.5)
+        enviar_mensagem(chat_id, TEXTO_INSTRUCOES_PIX)
+        time.sleep(0.5)
+        enviar_mensagem(chat_id, f"`{codigo_pix}`")
+    else:
+        enviar_mensagem(chat_id, f"❌ *Erro de comunicação com o banco. Tente novamente!*\n`{codigo_pix}`")
+
+# --- MOTOR DE REMARKETING CONTÍNUO ---
 def disparar_remarketing(chat_id, tipo_funil, contagem):
     status_atual = usuarios.get(chat_id, {}).get("status")
     
-    if tipo_funil == "ENTRADA" and status_atual != "AGUARDANDO_PAGAMENTO_ENTRADA": return
-    if tipo_funil == "TAXA" and status_atual != "PENDENTE_TAXA_SEGURANCA": return
+    # Cancela se o lead já avançou de etapa
+    if tipo_funil == "ENTRADA" and status_atual != "AGUARDANDO_PAGAMENTO_ENTRADA":
+        return
+    if tipo_funil == "TAXA" and status_atual != "PENDENTE_TAXA_SEGURANCA":
+        return
 
     if tipo_funil == "ENTRADA":
-        markup = {"inline_keyboard": [[{"text": "🔥 Quero Garantir meu VIP (R$ 9,90)", "callback_data": "comprar_990"}]]}
+        markup = {"inline_keyboard": [[{"text": "🔥 Garantir Meu Acesso VIP (R$ 9,90)", "callback_data": "comprar_990"}]]}
+        if contagem > 3:
+            markup = {"inline_keyboard": [[{"text": "💣 Última Chance com Desconto (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
     else:
         markup = {"inline_keyboard": [[{"text": "🔒 Pagar Taxa Reembolsável (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]}
+        if contagem > 3:
+            markup = {"inline_keyboard": [[{"text": "🔒 Taxa com Desconto Especial (R$ 4,90)", "callback_data": "pagar_taxa_490"}]]}
 
-    if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
-        legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Finalize agora!"
-        enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
-    elif contagem % 2 != 0:
-        legenda = "🔥 **O GRUPO ESTÁ A TODO VAPOR!**\n\nNão fique de fora dos novos conteúdos."
-        enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
+    def envio_background():
+        if contagem == 0 or (contagem > 0 and contagem % 6 == 0):
+            legenda = "🚨 **SEU ACESSO ESTÁ SENDO CANCELADO...**\n\nVocê vai mesmo perder isso? Câmeras escondidas, casadas no sigilo e conteúdos deletados da internet que você não acha em lugar nenhum. Finalize agora!"
+            enviar_video(chat_id, VIDEO_3_PROMESSA, legenda, markup)
+        elif contagem % 2 != 0:
+            legenda = "🔥 **MAIS DE 10.000 VAZADOS REAIS...**\n\nO grupo inteiro já está assistindo e só falta você. Conteúdos brutais que ninguém tem coragem de postar. Você tem poucos minutos!"
+            enviar_video(chat_id, VIDEO_1_NARRADO, legenda, markup)
+        else:
+            legenda = "👀 **VEJA COMO ESSE VÍDEO TERMINOU LÁ NO VIP...**\n\nO final é assustador. Libere o seu acesso agora mesmo, sem enrolação. Aperte o botão e entre!"
+            enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
+
+    threading.Thread(target=envio_background).start()
+
+    # Intervalos contínuos
+    if contagem == 0:
+        tempo = timedelta(minutes=5)
+    elif contagem == 1:
+        tempo = timedelta(minutes=5)
+    elif contagem == 2:
+        tempo = timedelta(minutes=10)
+    elif contagem == 3:
+        tempo = timedelta(minutes=25)
     else:
-        legenda = "👀 **Olha o nível do conteúdo que rola por dentro...** Garanta sua vaga!"
-        enviar_video(chat_id, VIDEO_2_LONGO, legenda, markup)
+        tempo = timedelta(hours=3)
 
-    scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=10), args=[chat_id, tipo_funil, contagem + 1])
+    scheduler.add_job(
+        disparar_remarketing,
+        'date',
+        run_date=datetime.now() + tempo,
+        args=[chat_id, tipo_funil, contagem + 1],
+        id=f"rmk_{chat_id}",
+        replace_existing=True
+    )
 
+# --- ROTAS DA API ---
 @app.route("/", methods=["GET"])
-def home(): 
+def home():
     return "Máquina de Vendas Ativa!", 200
 
 @app.route("/setup", methods=["GET"])
@@ -136,30 +213,47 @@ def setup_webhook():
 @app.route("/webhook/pushinpay", methods=["POST", "GET"])
 def pushinpay_webhook():
     dados = request.get_json(silent=True)
-    if not dados: 
+    if not dados:
         return {"status": "Teste recebido com sucesso!"}, 200
 
     status = dados.get("status")
-    chat_id = request.args.get("chat_id")
+    chat_id = request.args.get("chat_id") or dados.get("external_reference")
 
     if status in ["paid", "APPROVED", "PAID"] and chat_id:
         chat_id = int(chat_id)
         usuario_status = usuarios.get(chat_id, {}).get("status")
 
-        # Assim que pagar qualquer entrada (seja 9.90 ou o combo 14.89), vai direto para a taxa de segurança final
-        if usuario_status in ["AGUARDANDO_PAGAMENTO_ENTRADA", "AGUARDANDO_PAGAMENTO_COMBO"]:
+        # ETAPA 4: Pagou a entrada (VIP ou Combo) -> Envia Taxa de Segurança
+        if usuario_status == "AGUARDANDO_PAGAMENTO_ENTRADA":
             usuarios[chat_id] = {"status": "PENDENTE_TAXA_SEGURANCA"}
-            enviar_foto(chat_id, IMAGEM_TAXA_SEGURANCA, TEXTO_TAXA_SEGURANCA, {
-                "inline_keyboard": [[{"text": "🔒 Ativar e Reembolsar (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]
-            })
-            scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=5), args=[chat_id, "TAXA", 0])
+            
+            def enviar_taxa():
+                enviar_foto(chat_id, IMAGEM_TAXA_SEGURANCA, TEXTO_TAXA_SEGURANCA, {
+                    "inline_keyboard": [[{"text": "🔒 Ativar e Reembolsar (R$ 12,90)", "callback_data": "pagar_taxa_1290"}]]
+                })
+            
+            threading.Thread(target=enviar_taxa).start()
+            
+            scheduler.add_job(
+                disparar_remarketing,
+                'date',
+                run_date=datetime.now() + timedelta(minutes=5),
+                args=[chat_id, "TAXA", 0],
+                id=f"rmk_{chat_id}",
+                replace_existing=True
+            )
 
+        # ETAPA 5: Pagou a Taxa de Segurança -> Libera link do Grupo VIP
         elif usuario_status == "PENDENTE_TAXA_SEGURANCA":
             usuarios[chat_id] = {"status": "VIP_LIBERADO"}
             try:
-                res_convite = requests.post(f"{TELEGRAM_API_URL}/createChatInviteLink", json={"chat_id": VIP_GROUP_ID, "member_limit": 1}).json()
+                res_convite = requests.post(
+                    f"{TELEGRAM_API_URL}/createChatInviteLink",
+                    json={"chat_id": VIP_GROUP_ID, "member_limit": 1}
+                ).json()
                 link = res_convite.get("result", {}).get("invite_link", "LINK_MANUAL_AQUI")
-            except: link = "LINK_MANUAL_AQUI"
+            except:
+                link = "LINK_MANUAL_AQUI"
             
             enviar_mensagem(chat_id, f"🎉 **ACESSO VALIDADO!**\n\nBem-vindo ao submundo. Entre agora:\n👑 [ACESSAR VIP AQUI]({link})")
 
@@ -168,8 +262,10 @@ def pushinpay_webhook():
 @app.route(f"/webhook/telegram/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     update = request.get_json(silent=True)
-    if not update: return {"status": "ok"}, 200
+    if not update:
+        return {"status": "ok"}, 200
     
+    # ETAPA 1: /start -> Vídeo 1 (sem legenda) -> Vídeo 2 (com oferta principal + botão)
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         texto = update["message"].get("text", "")
@@ -177,75 +273,60 @@ def telegram_webhook():
         if texto.startswith("/start"):
             usuarios[chat_id] = {"status": "AGUARDANDO_PAGAMENTO_ENTRADA"}
             
-            # 1. Envia os vídeos de amostra
-            enviar_video(chat_id, VIDEO_1_NARRADO)
-            enviar_video(chat_id, VIDEO_2_LONGO, "😈 Uma pequena amostra do que te espera...")
+            def fluxo_inicial():
+                # 1º Vídeo: Narrado e SEM legenda
+                enviar_video(chat_id, VIDEO_1_NARRADO)
+                time.sleep(2)
+                
+                # 2º Vídeo: Longo COM legenda da oferta principal e o botão
+                markup_principal = {
+                    "inline_keyboard": [
+                        [{"text": "🔥 QUERO ENTRAR NO VIP AGORA", "callback_data": "abrir_oferta_ninfa"}]
+                    ]
+                }
+                enviar_video(chat_id, VIDEO_2_LONGO, TEXTO_OFERTA_PRINCIPAL, markup_principal)
             
-            # 2. Envia a Oferta Principal (VIP Padrão R$ 9,90)
-            markup = {
-                "inline_keyboard": [
-                    [{"text": "✅ Quero meu Acesso VIP (R$ 9,90)", "callback_data": "comprar_990"}]
-                ]
-            }
-            enviar_foto(chat_id, FOTO_OFERTA_PRINCIPAL, TEXTO_OFERTA_PRINCIPAL, markup)
+            threading.Thread(target=fluxo_inicial).start()
             
-            scheduler.add_job(disparar_remarketing, 'date', run_date=datetime.now() + timedelta(minutes=5), args=[chat_id, "ENTRADA", 0])
+            scheduler.add_job(
+                disparar_remarketing,
+                'date',
+                run_date=datetime.now() + timedelta(minutes=5),
+                args=[chat_id, "ENTRADA", 0],
+                id=f"rmk_{chat_id}",
+                replace_existing=True
+            )
 
+    # CLIQUES NOS BOTÕES
     elif "callback_query" in update:
         query = update["callback_query"]
         chat_id = query["message"]["chat"]["id"]
         botao = query["data"]
-        usuario_status = usuarios.get(chat_id, {}).get("status")
+        responder_clique_botao(query["id"])
 
-        # SE O CLIENTE CLICOU EM COMPRAR O VIP NORMAL (R$ 9,90), OFERECEMOS A SEGUNDA OFERTA (UPGRADE DA NINFA) ANTES DE COBRAR
-        if botao == "comprar_990" and usuario_status == "AGUARDANDO_PAGAMENTO_ENTRADA":
-            usuarios[chat_id]["status"] = "AGUARDANDO_UPGRADE_NINFA"
-            markup_ninfa = {
-                "inline_keyboard": [
-                    [{"text": "🔥 SIM! Quero o Combo com a Ninfa (R$ 14,89)", "callback_data": "aceitar_ninfa"}],
-                    [{"text": "❌ Não, quero apenas o VIP por R$ 9,90", "callback_data": "recusar_ninfa"}]
-                ]
-            }
-            enviar_foto(chat_id, FOTO_OFERTA_NINFA, TEXTO_OFERTA_NINFA, markup_ninfa)
-            return {"status": "ok"}, 200
-
-        # TRATAMENTO DA ESCOLHA DA SEGUNDA OFERTA
-        if usuario_status == "AGUARDANDO_UPGRADE_NINFA":
-            if botao == "aceitar_ninfa":
-                usuarios[chat_id]["status"] = "AGUARDANDO_PAGAMENTO_COMBO"
-                enviar_mensagem(chat_id, "⏳ *Gerando Pix do Combo Completo (VIP + Ninfa)...*")
-                codigo_pix = gerar_pix_pushinpay("14.89", chat_id)
-                if codigo_pix and not codigo_pix.startswith("ERRO_"):
-                    enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
-                    enviar_mensagem(chat_id, TEXTO_INSTRUCOES_PIX)
-                    enviar_mensagem(chat_id, f"`{codigo_pix}`")
-                else:
-                    enviar_mensagem(chat_id, f"❌ Erro ao gerar Pix: `{codigo_pix}`")
-                return {"status": "ok"}, 200
+        # ETAPA 2: Apertou o botão da 1ª oferta -> Mostra a 2ª oferta (Ninfa) com 2 botões separados
+        if botao == "abrir_oferta_ninfa":
+            def enviar_segunda_oferta():
+                markup_ninfa = {
+                    "inline_keyboard": [
+                        [{"text": "✅ VIP + Drive da Ninfa (R$ 14,89)", "callback_data": "comprar_1489"}],
+                        [{"text": "❌ Apenas o VIP Principal (R$ 9,90)", "callback_data": "comprar_990"}]
+                    ]
+                }
+                enviar_foto(chat_id, FOTO_OFERTA_NINFA, TEXTO_OFERTA_NINFA, markup_ninfa)
             
-            elif botao == "recusar_ninfa":
-                usuarios[chat_id]["status"] = "AGUARDANDO_PAGAMENTO_ENTRADA"
-                enviar_mensagem(chat_id, "⏳ *Gerando Pix apenas do VIP Padrão (R$ 9,90)...*")
-                codigo_pix = gerar_pix_pushinpay("9.90", chat_id)
-                if codigo_pix and not codigo_pix.startswith("ERRO_"):
-                    enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
-                    enviar_mensagem(chat_id, TEXTO_INSTRUCOES_PIX)
-                    enviar_mensagem(chat_id, f"`{codigo_pix}`")
-                else:
-                    enviar_mensagem(chat_id, f"❌ Erro ao gerar Pix: `{codigo_pix}`")
-                return {"status": "ok"}, 200
+            threading.Thread(target=enviar_segunda_oferta).start()
 
-        # Outros botões (ex: taxa de segurança)
-        valores = {"pagar_taxa_1290": "12.90", "pagar_taxa_490": "4.90"}
-        if botao in valores:
-            enviar_mensagem(chat_id, "⏳ *Gerando chave Pix da taxa, aguarde...*")
-            codigo_pix = gerar_pix_pushinpay(valores[botao], chat_id)
-            if codigo_pix and not codigo_pix.startswith("ERRO_"):
-                enviar_foto(chat_id, IMAGEM_TUTORIAL_PIX)
-                enviar_mensagem(chat_id, TEXTO_INSTRUCOES_PIX)
-                enviar_mensagem(chat_id, f"`{codigo_pix}`")
-            else:
-                enviar_mensagem(chat_id, f"❌ *Erro do Banco:* `{codigo_pix}`")
+        # ETAPA 3: Escolheu uma das opções (ou clicou em botão de taxa/remarketing) -> Envia Tutorial + Pix
+        else:
+            valores = {
+                "comprar_1489": "14.89",
+                "comprar_990": "9.90",
+                "pagar_taxa_1290": "12.90",
+                "pagar_taxa_490": "4.90"
+            }
+            if botao in valores:
+                threading.Thread(target=entregar_pix_completo, args=(chat_id, valores[botao])).start()
 
     return {"status": "ok"}, 200
 
