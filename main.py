@@ -320,10 +320,10 @@ def telegram_webhook():
         # ETAPA 3: Escolheu uma das opções (ou clicou em botão de taxa/remarketing) -> Envia Tutorial + Pix
         else:
             valores = {
-                "comprar_1489": "14.89",
-                "comprar_990": "9.90",
-                "pagar_taxa_1290": "12.90",
-                "pagar_taxa_490": "4.90"
+                "comprar_1489": "0.60",    # Teste do Combo (original: 14.89)
+                "comprar_990": "0.50",     # Teste do VIP Principal (original: 9.90)
+                "pagar_taxa_1290": "1.10", # Teste da Taxa de Segurança (original: 12.90)
+                "pagar_taxa_490": "0.55"   # Teste do Desconto (original: 4.90)
             }
             if botao in valores:
                 threading.Thread(target=entregar_pix_completo, args=(chat_id, valores[botao])).start()
